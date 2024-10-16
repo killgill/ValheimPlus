@@ -9,6 +9,7 @@ using TMPro;
 using UnityEngine;
 using ValheimPlus.Configurations;
 using ValheimPlus.RPC;
+using ValheimPlus.Utility;
 
 namespace ValheimPlus.GameClasses
 {
