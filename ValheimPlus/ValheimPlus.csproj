@@ -274,6 +274,7 @@
     <Compile Include="Utility\Helper.cs" />
     <Compile Include="Utility\ZNetExtensions.cs" />
     <Compile Include="VPlusDataObjects.cs" />
+    <Compile Include="GameClasses\Terminal.cs" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets\logo.png" />

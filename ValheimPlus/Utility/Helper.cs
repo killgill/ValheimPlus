@@ -37,23 +37,11 @@ namespace ValheimPlus
             return null;
         }
 
-        public static List<CodeInstruction> removeForcedCaseFunctionCalls(List<CodeInstruction> il)
+        public static bool IsSenderPlayerInRange(long senderId, float range)
         {
-            for (int i = 0; i < il.Count; ++i)
-            {
-                if (il[i].operand != null)
-                {
-                    string op = il[i].operand.ToString();
-                    if (op.Contains(nameof(string.ToUpper)) || op.Contains(nameof(string.ToLower)) || op.Contains(nameof(string.ToLowerInvariant)))
-                    {
-                        il[i] = new CodeInstruction(OpCodes.Nop);
-                        il[i - 1] = new CodeInstruction(OpCodes.Nop);
-                        il[i + 1] = new CodeInstruction(OpCodes.Nop);
-                    }
-
-                }
-            }
-            return il;
+            var sendingPlayer = getPlayerBySenderId(senderId);
+            var distance = Vector3.Distance(sendingPlayer.transform.position, Player.m_localPlayer.transform.position);
+            return distance <= range;
         }
 
         public static float tFloat(this float value, int digits)
