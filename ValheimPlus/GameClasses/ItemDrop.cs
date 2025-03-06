@@ -12,17 +12,16 @@ namespace ValheimPlus.GameClasses
 {
     public static class ItemDataExtensions
     {
-        public static bool IsAmmo(this ItemDrop.ItemData itemData)
-            => !String.IsNullOrEmpty(itemData.m_shared.m_ammoType)
+        public static bool IsAmmo(this ItemDrop.ItemData itemData) =>
+            !string.IsNullOrEmpty(itemData.m_shared.m_ammoType)
             && !itemData.m_shared.m_ammoType.EndsWith("turretbolt");
 
-        public static bool IsFood(this ItemDrop.ItemData itemData)
-            => itemData.m_shared.m_food > 0
+        public static bool IsFood(this ItemDrop.ItemData itemData) =>
+            itemData.m_shared.m_food > 0
             || itemData.m_shared.m_foodEitr > 0
             || itemData.m_shared.m_foodStamina > 0;
 
-        public static bool IsMead(this ItemDrop.ItemData itemData)
-            => itemData.m_shared.m_isDrink;
+        public static bool IsMead(this ItemDrop.ItemData itemData) => itemData.m_shared.m_isDrink;
     }
 
     /// <summary>

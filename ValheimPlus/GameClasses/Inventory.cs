@@ -222,8 +222,7 @@ namespace ValheimPlus.GameClasses
         {
             var config = Configuration.Current.AutoStack;
             if (!config.IsEnabled) return instructions;
-            if (!config.autoStackAllIgnoreEquipment && !config.ignoreFood
-            && !config.ignoreArrows && !config.ignoreMead)
+            if (!config.autoStackAllIgnoreEquipment && !config.ignoreFood && !config.ignoreAmmo && !config.ignoreMead)
                 return instructions;
 
             var il = instructions.ToList();
