@@ -1,153 +1,188 @@
-﻿using HarmonyLib;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Reflection.Emit;
+using HarmonyLib;
+using JetBrains.Annotations;
 using ValheimPlus.Configurations;
+using Object = UnityEngine.Object;
 
 namespace ValheimPlus.GameClasses
 {
-    public class EggGrowHelpers
+    public static class EggGrowHelpers
     {
-        public static List<CodeInstruction> StackTranspiler(IEnumerable<CodeInstruction> instructions)
+        private static readonly FieldInfo Field_ItemData_M_Stack =
+            AccessTools.Field(typeof(ItemDrop.ItemData), nameof(ItemDrop.ItemData.m_stack));
+
+        public static CodeMatcher ApplyStackTranspiler(IEnumerable<CodeInstruction> instructions,
+            ILGenerator generator, string caller)
         {
-            if (!Configuration.Current.Egg.IsEnabled || !Configuration.Current.Egg.canStack)
-                return null;
+            var config = Configuration.Current.Egg;
+            var il = instructions.ToList();
+            var codeMatcher = new CodeMatcher(il, generator);
+            if (!config.IsEnabled || !config.canStack) return codeMatcher;
 
-            var stackField = AccessTools.Field(typeof(ItemDrop.ItemData), nameof(ItemDrop.ItemData.m_stack));
-
-            var codes = new List<CodeInstruction>(instructions);
-            for (int i = 1; i < codes.Count; i++)
+            try
             {
-                if (codes[i].opcode == OpCodes.Ldc_I4_1 && codes[i - 1].LoadsField(stackField))
-                {
-                    codes[i] = new CodeInstruction(OpCodes.Ldc_I4, int.MaxValue);
-                    break; // replace only the first instance
-                }
+                return codeMatcher
+                    .MatchEndForward(
+                        new CodeMatch(inst => inst.LoadsField(Field_ItemData_M_Stack)),
+                        OpCodes.Ldc_I4_1
+                    )
+                    .ThrowIfNotMatch("No match for code that checks egg stack size.")
+                    .Set(OpCodes.Ldc_I4, int.MaxValue)
+                    .Start();
             }
-
-            return codes;
+            catch (Exception e)
+            {
+                ValheimPlusPlugin.Logger.LogError(
+                    $"Failed to apply `{caller}`. " +
+                    "This may cause the `Egg.canStack` config to not function correctly. " +
+                    $"Exception is:\n{e}");
+                return new CodeMatcher(il, generator);
+            }
         }
     }
 
     [HarmonyPatch(typeof(EggGrow), nameof(EggGrow.Start))]
-    public class EggGrow_Start_Patch
+    public static class EggGrow_Start_Patch
     {
+        [UsedImplicitly]
         public static void Prefix(EggGrow __instance)
         {
-            if (!Configuration.Current.Egg.IsEnabled)
-                return;
+            var config = Configuration.Current.Egg;
+            if (!config.IsEnabled) return;
 
-            __instance.m_growTime = Configuration.Current.Egg.hatchTime;
-            __instance.m_requireNearbyFire = Configuration.Current.Egg.requireShelter;
-            __instance.m_requireUnderRoof = Configuration.Current.Egg.requireShelter;
+            __instance.m_growTime = config.hatchTime;
+            __instance.m_requireNearbyFire = config.requireShelter;
+            __instance.m_requireUnderRoof = config.requireShelter;
         }
     }
 
     [HarmonyPatch(typeof(EggGrow), nameof(EggGrow.CanGrow))]
-    public class EggGrow_CanGrow_Transpiler
+    public static class EggGrow_CanGrow_Transpiler
     {
-        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-        {
-            var codes = EggGrowHelpers.StackTranspiler(instructions);
-            return codes?.AsEnumerable() ?? instructions;
-        }
+        [UsedImplicitly]
+        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions,
+            ILGenerator generator) =>
+            EggGrowHelpers.ApplyStackTranspiler(instructions, generator, nameof(EggGrow_CanGrow_Transpiler))
+                .InstructionEnumeration();
     }
 
     [HarmonyPatch(typeof(EggGrow), nameof(EggGrow.GrowUpdate))]
-    public class EggGrow_GrowUpdate_Transpiler
+    public static class EggGrow_GrowUpdate_Transpiler
     {
+        private static readonly MethodInfo Method_SpawnAll =
+            AccessTools.Method(typeof(EggGrow_GrowUpdate_Transpiler), nameof(SpawnAll));
+
+        private static readonly FieldInfo Field_EggGrow_M_Nview =
+            AccessTools.Field(typeof(EggGrow), nameof(EggGrow.m_nview));
+
+        private static readonly MethodInfo Method_ZNetView_Destroy =
+            AccessTools.Method(typeof(ZNetView), nameof(ZNetView.Destroy));
+
+        [UsedImplicitly]
+        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions,
+            ILGenerator generator)
+        {
+            var config = Configuration.Current.Egg;
+            if (!config.IsEnabled || !config.canStack) return instructions;
+
+            var il = instructions.ToList();
+            var codeMatcher = EggGrowHelpers.ApplyStackTranspiler(il, generator,
+                nameof(EggGrow_GrowUpdate_Transpiler));
+
+            try
+            {
+                return codeMatcher
+                    .MatchStartForward(
+                        OpCodes.Ldarg_0,
+                        new CodeMatch(inst => inst.LoadsField(Field_EggGrow_M_Nview)),
+                        new CodeMatch(inst => inst.Calls(Method_ZNetView_Destroy))
+                    )
+                    .ThrowIfNotMatch("No match for code that destroys the ZNetView.")
+                    .InsertAndAdvance(
+                        new CodeInstruction(OpCodes.Ldarg_0),
+                        new CodeInstruction(OpCodes.Call, Method_SpawnAll)
+                    )
+                    .InstructionEnumeration();
+            }
+            catch (Exception e)
+            {
+                ValheimPlusPlugin.Logger.LogError(
+                    "Failed to apply `EggGrow_GrowUpdate_Transpiler`. " +
+                    "This may cause the `Egg.canStack` config to not function correctly. " +
+                    $"Exception is:\n{e}");
+                return il;
+            }
+        }
+
         // Spawns the rest of the egg stack
         private static void SpawnAll(EggGrow instance)
         {
             var stackSize = instance.m_item.m_itemData.m_stack;
             for (int i = 0; i < stackSize - 1; i++)
             {
-                Character component = UnityEngine.Object.Instantiate(
-                    instance.m_grownPrefab, instance.transform.position, instance.transform.rotation)
+                var newSpawn = Object
+                    .Instantiate(instance.m_grownPrefab, instance.transform.position, instance.transform.rotation)
                     .GetComponent<Character>();
+
                 instance.m_hatchEffect.Create(instance.transform.position, instance.transform.rotation);
-                if ((bool)component)
-                {
-                    component.SetTamed(instance.m_tamed);
-                    component.SetLevel(instance.m_item.m_itemData.m_quality);
-                }
+
+                if (!newSpawn) continue;
+
+                newSpawn.SetTamed(instance.m_tamed);
+                newSpawn.SetLevel(instance.m_item.m_itemData.m_quality);
             }
-        }
-
-        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-        {
-            var codes = EggGrowHelpers.StackTranspiler(instructions);
-            if (codes == null)
-                return instructions;
-
-            var spawnAllMethod = AccessTools.Method(typeof(EggGrow_GrowUpdate_Transpiler), nameof(SpawnAll));
-            var zNetViewField = AccessTools.Field(typeof(EggGrow), nameof(EggGrow.m_nview));
-            var zNetViewDestroy = AccessTools.Method(typeof(ZNetView), nameof(ZNetView.Destroy));
-
-            // subtract 2 from count to avoid out of bounds exception
-            for (int i = 0; i < codes.Count - 2; i++)
-            {
-                // Must be inserted before the nview.Destroy call
-                if (codes[i].opcode == OpCodes.Ldarg_0 && codes[i + 1].LoadsField(zNetViewField) && codes[i + 2].Calls(zNetViewDestroy))
-                {
-                    // Load the instance and call the SpawnAll method
-                    codes.Insert(i, new CodeInstruction(OpCodes.Ldarg_0));
-                    codes.Insert(i + 1, new CodeInstruction(OpCodes.Call, spawnAllMethod));
-                    break;
-                }
-            }
-
-            return codes.AsEnumerable();
         }
     }
 
     [HarmonyPatch(typeof(EggGrow), nameof(EggGrow.GetHoverText))]
-    public class EggGrow_GetHoverText_Patch
+    public static class EggGrow_GetHoverText_Patch
     {
-        private static string GetTimeLeft(float growStart)
-        {
-            var elapsed = ZNet.instance.GetTimeSeconds() - growStart;
-            var timeLeft = Configuration.Current.Egg.hatchTime - elapsed;
+        [UsedImplicitly]
+        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions,
+            ILGenerator generator) =>
+            EggGrowHelpers.ApplyStackTranspiler(instructions, generator, nameof(EggGrow_GetHoverText_Patch))
+                .InstructionEnumeration();
 
-            int minutes = (int)timeLeft / 60;
-
-            string info;
-            if (((int)timeLeft) >= 120)
-                info = minutes + " minutes";
-
-            // grow update is only called every 5 seconds
-            else if (timeLeft < 0)
-                info = "0 seconds";
-
-            else
-                info = (int)timeLeft + " seconds";
-
-            return "\nTime left: " + info;
-        }
-
-        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-        {
-            var codes = EggGrowHelpers.StackTranspiler(instructions);
-            return codes?.AsEnumerable() ?? instructions;
-        }
-
+        [UsedImplicitly]
         public static void Postfix(EggGrow __instance, ref string __result)
         {
-            if (!Configuration.Current.Egg.IsEnabled || !Configuration.Current.Egg.showHatchTime)
-                return;
+            if (!Configuration.Current.Egg.IsEnabled || !Configuration.Current.Egg.showHatchTime) return;
 
-            int num = __result.IndexOf("\n");
-            if (num <= 0)
-                return;
+            int num = __result.IndexOf("\n", StringComparison.Ordinal);
+            if (num <= 0) return;
 
             var firstLine = __result.Substring(0, num);
-            if (!firstLine.Contains(Localization.instance.Localize("$item_chicken_egg_warm")))
-                return;
+            if (!firstLine.Contains(Localization.instance.Localize("$item_chicken_egg_warm"))) return;
 
             var growStart = __instance.m_nview.GetZDO().GetFloat(ZDOVars.s_growStart);
             var timeLeft = GetTimeLeft(growStart);
             var lastLine = __result.Substring(num);
             __result = firstLine + timeLeft + lastLine;
+        }
+
+        private static string GetTimeLeft(float growStart)
+        {
+            var elapsed = ZNet.instance.GetTimeSeconds() - growStart;
+
+            // grow update is only called every 5 seconds
+            var timeLeftSeconds = (int)Math.Max(0, Configuration.Current.Egg.hatchTime - elapsed);
+
+            string timeLeftString;
+            if (timeLeftSeconds >= 120)
+            {
+                var timeLeftMinutes = elapsed / 60;
+                timeLeftString = timeLeftMinutes + " minutes";
+            }
+            else
+            {
+                timeLeftString = timeLeftSeconds + " seconds";
+            }
+
+            return "\nTime left: " + timeLeftString;
         }
     }
 }
