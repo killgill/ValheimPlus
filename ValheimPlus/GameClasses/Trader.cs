@@ -15,7 +15,7 @@ namespace ValheimPlus.GameClasses
     }
 
     [HarmonyPatch(typeof(Trader), nameof(Trader.Start))]
-    public class Trader_Start_Patch
+    public static class Trader_Start_Patch
     {
         [UsedImplicitly]
         public static void Postfix(Trader __instance)
