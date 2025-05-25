@@ -226,9 +226,14 @@ namespace ValheimPlus.Configurations
         public static object GetEnumValue(this KeyDataCollection data, string key, object defaultVal)
         {
             var enumType = defaultVal.GetType();
-            try { return Enum.Parse(enumType, data[key], true); }
-            catch {
-                ValheimPlusPlugin.Logger.LogWarning($" [{enumType}] Could not read {key}, using default value of {defaultVal}");
+            try
+            {
+                return Enum.Parse(enumType, data[key], true);
+            }
+            catch
+            {
+                ValheimPlusPlugin.Logger.LogWarning(
+                    $" [{enumType}] Could not read {key}, using default value of {defaultVal}");
                 return defaultVal;
             }
         }
@@ -241,22 +246,28 @@ namespace ValheimPlus.Configurations
             var values = data[key].Split(',').ToList();
             values.ForEach(x => x.Trim());
 
-            foreach (var opt in values) {
+            foreach (var opt in values)
+            {
                 try
                 {
                     var flag = Enum.Parse(enumType, opt, true);
                     flags.Add(flag);
-                } catch
+                }
+                catch
                 {
                     ValheimPlusPlugin.Logger.LogWarning($" [{enumType.Name}] Unrecognized value `{opt}` in {key}");
                 }
             }
 
-            var value = flags.Aggregate(0, (current, flag) => (int)current | (int)flag);
-            try { return Enum.ToObject(enumType, value); }
+            var value = flags.Aggregate(0, (current, flag) => current | (int)flag);
+            try
+            {
+                return Enum.ToObject(enumType, value);
+            }
             catch
             {
-                ValheimPlusPlugin.Logger.LogWarning($" [{enumType}] Could not read {key}, using default value of {defaultVal}");
+                ValheimPlusPlugin.Logger.LogWarning(
+                    $" [{enumType}] Could not read {key}, using default value of {defaultVal}");
                 return defaultVal;
             }
         }

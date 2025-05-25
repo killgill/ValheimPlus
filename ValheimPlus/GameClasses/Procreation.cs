@@ -1,30 +1,29 @@
-﻿using HarmonyLib;
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection.Emit;
-using System.Reflection;
+using HarmonyLib;
+using JetBrains.Annotations;
 using ValheimPlus.Configurations;
 
 namespace ValheimPlus.GameClasses
 {
-
     public static class ProcreationHelpers
     {
-        public static bool IsValidAnimalType(string name) {
-            if (!TameableHelpers.NamedTypes.TryGetValue(name, out AnimalType type))
-                return false;
-
+        public static bool IsValidAnimalType(string name)
+        {
+            if (!TameableHelpers.NamedTypes.TryGetValue(name, out var type)) return false;
             var config = Configuration.Current.Procreation;
             return config.animalTypes.HasFlag(type);
         }
 
-        public static bool IsAlertedIgnored(Procreation instance)
-            => IsValidAnimalType(instance.m_character.m_name);
-
         public static bool IsHungerIgnored(Tameable instance)
             => Configuration.Current.Procreation.IsEnabled
-            && Configuration.Current.Procreation.ignoreHunger
-            && IsValidAnimalType(instance.m_character.m_name);
+               && Configuration.Current.Procreation.ignoreHunger
+               && IsValidAnimalType(instance.m_character.m_name);
+
+        public static bool IsAlertedWithIgnore(Tameable tameable) =>
+            !IsValidAnimalType(tameable.m_character.m_name) && tameable.m_monsterAI.IsAlerted();
 
         private static string GetPregnantStatus(Procreation procreation)
         {
@@ -35,18 +34,13 @@ namespace ValheimPlus.GameClasses
 
             var result = "\n<color=#FFAEC9>Pregnant";
 
-            if (timeLeft > 120)
-                result += " ( " + (timeLeft / 60) + " minutes left )";
-
-            else if (timeLeft > 0)
-                result += " ( " + timeLeft + " seconds left )";
-
-            else if (timeLeft > -15)
-                result += " ( Due to give birth )";
-
-            // Update interval is 30 seconds so we can just pretend it's overdue
-            else
-                result += " ( Overdue )";
+            result += timeLeft switch
+            {
+                > 120 => " ( " + timeLeft / 60 + " minutes left )",
+                > 0 => " ( " + timeLeft + " seconds left )",
+                > -15 => " ( Due to give birth )",
+                _ => " ( Overdue )"
+            };
 
             result += "</color>";
             return result;
@@ -88,20 +82,21 @@ namespace ValheimPlus.GameClasses
                 return;
 
             result = Localization.instance.Localize(character.m_name);
-            var timeleft = GrowupHelpers.GetGrowTimeLeft(growup);
+            var timeLeft = GrowupHelpers.GetGrowTimeLeft(growup);
 
-            if (timeleft > 120)
-                result += " ( Matures in " + (timeleft / 60) + " minutes )";
-            else if (timeleft > 0)
-                result += " ( Matures in " + timeleft + " seconds )";
-            else
-                result += " ( Matured )";
+            result += timeLeft switch
+            {
+                > 120 => " ( Matures in " + timeLeft / 60 + " minutes )",
+                > 0 => " ( Matures in " + timeLeft + " seconds )",
+                _ => " ( Matured )"
+            };
         }
     }
 
     [HarmonyPatch(typeof(Procreation), nameof(Procreation.Awake))]
     public static class Procreation_Awake_Patch
     {
+        [UsedImplicitly]
         public static void Postfix(Procreation __instance)
         {
             var config = Configuration.Current.Procreation;
@@ -126,33 +121,33 @@ namespace ValheimPlus.GameClasses
     [HarmonyPatch(typeof(Procreation), nameof(Procreation.Procreate))]
     public static class Procreation_Procreate_Patch
     {
-        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions, ILGenerator ilGenerator)
+        [UsedImplicitly]
+        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions,
+            ILGenerator ilGenerator)
         {
             var config = Configuration.Current.Procreation;
-            if (!config.IsEnabled || !config.ignoreAlerted)
-                return instructions;
+            if (!config.IsEnabled || !config.ignoreAlerted) return instructions;
 
-            var baseAiIsAlertedMethod = AccessTools.Method(typeof(BaseAI), nameof(BaseAI.IsAlerted));
-            var isAlertedIgnoredMethod = AccessTools.Method(typeof(ProcreationHelpers), nameof(ProcreationHelpers.IsAlertedIgnored));
+            var il = instructions.ToList();
+            try
+            {
+                var originalIsAlertedMethod = AccessTools.Method(typeof(BaseAI), nameof(BaseAI.IsAlerted));
+                var newIsAlertedMethod =
+                    AccessTools.Method(typeof(ProcreationHelpers), nameof(ProcreationHelpers.IsAlertedWithIgnore));
+                return new CodeMatcher(il, ilGenerator)
+                    .MatchStartForward(new CodeMatch(OpCodes.Callvirt, originalIsAlertedMethod))
+                    .ThrowIfNotMatch("Could not find BaseAI.IsAlerted call")
+                    .Advance(-1)
+                    .RemoveInstructions(2)
+                    .InsertAndAdvance(new CodeInstruction(OpCodes.Call, newIsAlertedMethod))
+                    .InstructionEnumeration();
+            }
+            catch (Exception ex)
+            {
+                ValheimPlusPlugin.Logger.LogError(ex);
+            }
 
-            Label? passthrough = null;
-            var matcher = new CodeMatcher(instructions, ilGenerator);
-            matcher.MatchEndForward(
-                new CodeMatch(inst => inst.Calls(baseAiIsAlertedMethod)),
-                new CodeMatch(inst => inst.Branches(out passthrough))
-            ).ThrowIfNotMatch("Could not find BaseAI.IsAlerted call");
-
-            if (!passthrough.HasValue)
-                throw new Exception("Could not find BaseAI.IsAlerted branch");
-
-            matcher.Advance(1)
-            .InsertAndAdvance(
-                new(OpCodes.Ldarg_0),
-                new(OpCodes.Call, isAlertedIgnoredMethod),
-                new(OpCodes.Brtrue, passthrough)
-            );
-
-            return matcher.InstructionEnumeration();
+            return il;
         }
     }
 }

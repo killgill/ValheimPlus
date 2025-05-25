@@ -1,15 +1,17 @@
-﻿using HarmonyLib;
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
+using HarmonyLib;
+using JetBrains.Annotations;
 using ValheimPlus.Configurations;
 
 namespace ValheimPlus.GameClasses
 {
     public enum TameableMortalityTypes
     {
-        Normal,
+        [UsedImplicitly] Normal,
         Essential,
         Immortal
     }
@@ -17,7 +19,7 @@ namespace ValheimPlus.GameClasses
     [Flags]
     public enum AnimalType
     {
-        None = 0,
+        [UsedImplicitly] None = 0,
         Boar = 1 << 0,
         Wolf = 1 << 1,
         Lox = 1 << 2,
@@ -28,7 +30,8 @@ namespace ValheimPlus.GameClasses
 
     public static class TameableHelpers
     {
-        public readonly static Dictionary<string, AnimalType> NamedTypes = new() {
+        public static readonly Dictionary<string, AnimalType> NamedTypes = new()
+        {
             { "$enemy_asksvin", AnimalType.Asksvin },
             { "$enemy_asksvin_hatchling", AnimalType.Asksvin },
             { "$enemy_boar", AnimalType.Boar },
@@ -43,9 +46,7 @@ namespace ValheimPlus.GameClasses
 
         public static bool IsValidAnimalType(string name)
         {
-            if (!NamedTypes.TryGetValue(name, out AnimalType type))
-                return false;
-
+            if (!NamedTypes.TryGetValue(name, out var type)) return false;
             var config = Configuration.Current.Tameable;
             return config.animalTypes.HasFlag(type);
         }
@@ -53,15 +54,15 @@ namespace ValheimPlus.GameClasses
         public static bool IsHungerIgnored(Tameable instance)
         {
             var config = Configuration.Current.Tameable;
-            if (!config.IsEnabled || !config.ignoreHunger || !IsValidAnimalType(instance.m_character.m_name))
+            if (!config.IsEnabled || !config.ignoreHunger || !IsValidAnimalType(instance.m_character.m_name)) 
                 return false;
 
             var timeLeft = instance.m_nview.GetZDO().GetFloat(ZDOVars.s_tameTimeLeft);
             return timeLeft > 0;
         }
 
-        public static bool IsAlertedIgnored(Tameable instance)
-            => IsValidAnimalType(instance.m_character.m_name);
+        public static bool IsAlertedWithIgnore(Tameable tameable) =>
+            !IsValidAnimalType(tameable.m_character.m_name) && tameable.m_monsterAI.IsAlerted();
     }
 
     /// <summary>
@@ -70,32 +71,33 @@ namespace ValheimPlus.GameClasses
     [HarmonyPatch(typeof(Tameable), nameof(Tameable.GetHoverText))]
     public static class Tameable_GetHoverText_Patch
     {
+        [UsedImplicitly]
         public static void Postfix(Tameable __instance, ref string __result)
         {
             if (Configuration.Current.Tameable.IsEnabled && Configuration.Current.Tameable.stunInformation)
             {
                 // If tamed creature is recovering from a stun, then add Stunned to hover text.
                 if (__instance.m_character.m_nview.GetZDO().GetBool("isRecoveringFromStun"))
-                    __result = __result.Insert(__result.IndexOf(" )"), ", Stunned");
+                    __result = __result.Insert(__result.IndexOf(" )", StringComparison.Ordinal), ", Stunned");
             }
 
             var procreation = __instance.GetComponent<Procreation>();
-            if (procreation != null)
-                ProcreationHelpers.AddLoveInformation(__instance, procreation, ref __result);
+            if (procreation) ProcreationHelpers.AddLoveInformation(__instance, procreation, ref __result);
         }
     }
 
     [HarmonyPatch(typeof(Tameable), nameof(Tameable.IsHungry))]
     public static class Tameable_IsHungry_Patch
     {
+        [UsedImplicitly]
         private static void Postfix(Tameable __instance, ref bool __result)
         {
             // We don't care if it's already false
             if (!__result) return;
 
             var isTamed = __instance.m_character.IsTamed();
-            __result = !(isTamed ?
-                ProcreationHelpers.IsHungerIgnored(__instance)
+            __result = !(isTamed
+                ? ProcreationHelpers.IsHungerIgnored(__instance)
                 : TameableHelpers.IsHungerIgnored(__instance));
         }
     }
@@ -103,60 +105,60 @@ namespace ValheimPlus.GameClasses
     [HarmonyPatch(typeof(Tameable), nameof(Tameable.Awake))]
     public static class Tameable_Awake_Patch
     {
+        [UsedImplicitly]
         public static void Postfix(Tameable __instance)
         {
             var config = Configuration.Current.Tameable;
-            if (!config.IsEnabled)
-                return;
-
-            if (!TameableHelpers.IsValidAnimalType(__instance.m_character.m_name))
-                return;
+            if (!config.IsEnabled) return;
+            if (!TameableHelpers.IsValidAnimalType(__instance.m_character.m_name)) return;
 
             Helper.applyModifierValueTo(ref __instance.m_tamingTime, config.tameTimeMultiplier);
             Helper.applyModifierValueTo(ref __instance.m_tamingSpeedMultiplierRange, config.tameBoostRangeMultiplier);
             Helper.applyModifierValueTo(ref __instance.m_tamingBoostMultiplier, config.tameBoostMultiplier);
 
-            if (__instance.m_nview.GetZDO().GetFloat(ZDOVars.s_tameTimeLeft, out float timeLeft))
-                if (timeLeft > __instance.m_tamingTime)
-                    __instance.m_nview.GetZDO().Set(ZDOVars.s_tameTimeLeft, __instance.m_tamingTime);
+            if (!__instance.m_nview.GetZDO().GetFloat(ZDOVars.s_tameTimeLeft, out float timeLeft)) return;
+            if (timeLeft > __instance.m_tamingTime)
+                __instance.m_nview.GetZDO().Set(ZDOVars.s_tameTimeLeft, __instance.m_tamingTime);
         }
     }
 
     [HarmonyPatch(typeof(Tameable))]
     public static class Tameable_Alerted_Patches
     {
+        [UsedImplicitly]
         private static IEnumerable<MethodBase> TargetMethods()
         {
             yield return AccessTools.Method(typeof(Tameable), nameof(Tameable.TamingUpdate));
             yield return AccessTools.Method(typeof(Tameable), nameof(Tameable.GetStatusString));
         }
 
-        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions, ILGenerator ilGenerator)
+        [UsedImplicitly]
+        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions,
+            ILGenerator ilGenerator)
         {
             var config = Configuration.Current.Tameable;
-            if (!config.IsEnabled || !config.ignoreAlerted)
-                return instructions;
+            if (!config.IsEnabled || !config.ignoreAlerted) return instructions;
 
-            var baseAiIsAlertedMethod = AccessTools.Method(typeof(BaseAI), nameof(BaseAI.IsAlerted));
-            var isAlertedIgnoredMethod = AccessTools.Method(typeof(TameableHelpers), nameof(TameableHelpers.IsAlertedIgnored));
+            var il = instructions.ToList();
+            try
+            {
+                var originalIsAlertedMethod = AccessTools.Method(typeof(BaseAI), nameof(BaseAI.IsAlerted));
+                var newIsAlertedMethod =
+                    AccessTools.Method(typeof(TameableHelpers), nameof(TameableHelpers.IsAlertedWithIgnore));
+                return new CodeMatcher(il, ilGenerator)
+                    .MatchStartForward(new CodeMatch(OpCodes.Callvirt, originalIsAlertedMethod))
+                    .ThrowIfNotMatch("Could not find BaseAI.IsAlerted call")
+                    .Advance(-1)
+                    .RemoveInstructions(2)
+                    .InsertAndAdvance(new CodeInstruction(OpCodes.Call, newIsAlertedMethod))
+                    .InstructionEnumeration();
+            }
+            catch (Exception ex)
+            {
+                ValheimPlusPlugin.Logger.LogError(ex);
+            }
 
-            Label? passthrough = null;
-            var matcher = new CodeMatcher(instructions, ilGenerator);
-            matcher.MatchEndForward(
-                new(inst => inst.Calls(baseAiIsAlertedMethod)),
-                new(inst => inst.Branches(out passthrough))
-            ).ThrowIfNotMatch("Could not find BaseAI.IsAlerted call");
-
-            if (!passthrough.HasValue)
-                throw new Exception("Could not find BaseAI.IsAlerted branch");
-
-            matcher.Advance(1).InsertAndAdvance(
-                new(OpCodes.Ldarg_0), // this (Tameable)
-                new(OpCodes.Call, isAlertedIgnoredMethod),
-                new(OpCodes.Brtrue, passthrough)
-            );
-
-            return matcher.InstructionEnumeration();
+            return il;
         }
     }
 }

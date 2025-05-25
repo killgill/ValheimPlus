@@ -1,17 +1,14 @@
-﻿using HarmonyLib;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using System.Reflection.Emit;
+using HarmonyLib;
+using JetBrains.Annotations;
 using UnityEngine;
-using ValheimPlus;
 using ValheimPlus.Configurations;
-using ValheimPlus.Utility;
 
 namespace ValheimPlus.GameClasses
 {
-
     // TODO: clamp stun value
 
     /// <summary>
@@ -24,16 +21,16 @@ namespace ValheimPlus.GameClasses
         {
             if (Configuration.Current.Tameable.IsEnabled)
             {
-
                 Tameable tamed = __instance.GetComponent<Tameable>();
                 if (tamed == null)
                     return;
 
                 MonsterAI monsterAI = __instance;
                 ZDO zdo = monsterAI.m_nview.GetZDO();
-
-                if ((TameableMortalityTypes)Configuration.Current.Tameable.mortality != TameableMortalityTypes.Essential || zdo == null || !zdo.GetBool("isRecoveringFromStun"))
-                    return;
+                var mortality = (TameableMortalityTypes)Configuration.Current.Tameable.mortality;
+                if (mortality != TameableMortalityTypes.Essential ||
+                    zdo == null ||
+                    !zdo.GetBool("isRecoveringFromStun")) return;
 
                 if (monsterAI.m_character.m_moveDir != Vector3.zero)
                     monsterAI.StopMoving();
@@ -58,42 +55,45 @@ namespace ValheimPlus.GameClasses
         }
     }
 
-	[HarmonyPatch(typeof(MonsterAI), nameof(MonsterAI.UpdateAI))]
-	public static class MonsterAI_UpdateAI_Transpiler
-	{
-		private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions, ILGenerator ilGenerator)
-		{
-			var matcher = new CodeMatcher(instructions, ilGenerator);
-			if (Configuration.Current.Tameable.IsEnabled && Configuration.Current.Tameable.ignoreAlerted)
-			{
-				// Ignores alerted state when tameable mob is looking for food in order to start the taming process.
-				// This is the _only_ way to ignore IsAlerted without destroying the AI for all other creatures.
-				try
-				{
-					var updateConsumeItem = AccessTools.Method(typeof(MonsterAI), nameof(MonsterAI.UpdateConsumeItem));
-					var updateConsumeItemLabel = matcher
-						.MatchStartForward(
-							OpCodes.Ldarg_0,
-							OpCodes.Ldloc_0,
-							OpCodes.Ldarg_1,
-							new CodeMatch(inst => inst.Calls(updateConsumeItem)))
-						.ThrowIfNotMatch("No match for UpdateConsumeItem method call.")
-						.Labels.First();
+    [HarmonyPatch(typeof(MonsterAI), nameof(MonsterAI.UpdateAI))]
+    public static class MonsterAI_UpdateAI_Transpiler
+    {
+        [UsedImplicitly]
+        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions,
+            ILGenerator ilGenerator)
+        {
+            var il = instructions.ToList();
+            if (!Configuration.Current.Tameable.IsEnabled || !Configuration.Current.Tameable.ignoreAlerted) return il;
+            
+            // Ignores alerted state when tameable mob is looking for food in order to start the taming process.
+            // This is the _only_ way to ignore IsAlerted without destroying the AI for all other creatures.
+            var matcher = new CodeMatcher(il, ilGenerator);
+            try
+            {
+                var updateConsumeItem = AccessTools.Method(typeof(MonsterAI), nameof(MonsterAI.UpdateConsumeItem));
+                var updateConsumeItemLabel = matcher
+                    .MatchStartForward(
+                        OpCodes.Ldarg_0,
+                        OpCodes.Ldloc_0,
+                        OpCodes.Ldarg_1,
+                        new CodeMatch(inst => inst.Calls(updateConsumeItem)))
+                    .ThrowIfNotMatch("No match for UpdateConsumeItem method call.")
+                    .Labels
+                    .First();
 
-					matcher
-						.MatchStartBackwards(OpCodes.Ret)
-						.ThrowIfNotMatch("Could not find the end of the conditional before UpdateConsumeItem call.")
-						.Advance(1)
-						.Set(OpCodes.Br_S, updateConsumeItemLabel)
-						.Start();
+                return matcher
+                    .MatchStartBackwards(OpCodes.Ret)
+                    .ThrowIfNotMatch("Could not find the end of the conditional before UpdateConsumeItem call.")
+                    .Advance(1)
+                    .Set(OpCodes.Br_S, updateConsumeItemLabel)
+                    .InstructionEnumeration();
+            }
+            catch (Exception ex)
+            {
+                ValheimPlusPlugin.Logger.LogError(ex);
+            }
 
-				} catch (Exception ex)
-				{
-					ValheimPlusPlugin.Logger.LogError(ex);
-				}
-			}
-
-			return matcher.InstructionEnumeration();
-		}
-	}
+            return il;
+        }
+    }
 }
