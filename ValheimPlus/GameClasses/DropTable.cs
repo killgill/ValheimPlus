@@ -42,6 +42,7 @@ namespace ValheimPlus.GameClasses
                     "YggdrasilWood" => config.yggdrasilWood,
                     "Stone" => config.stone,
                     "BlackMarble" => config.blackMarble,
+                    "Softtissue" => config.softTissue
                     "TinOre" => config.tinOre,
                     "CopperOre" => config.copperOre,
                     "CopperScrap" => config.copperScrap,

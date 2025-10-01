@@ -9,6 +9,7 @@
         public float yggdrasilWood { get; internal set; } = 0;
         public float stone { get; internal set; } = 0;
         public float blackMarble { get; internal set; } = 0;
+        public float softTissue { get; internal set; } = 0;
         public float tinOre { get; internal set; } = 0;
         public float copperOre { get; internal set; } = 0;
         public float copperScrap { get; internal set; } = 0;
